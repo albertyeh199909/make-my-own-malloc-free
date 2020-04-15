@@ -1,0 +1,362 @@
+// COMP1521 19t2 ... Assignment 2: heap management system
+
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "myHeap.h"
+
+/** minimum total space for heap */
+#define MIN_HEAP 4096
+/** minimum amount of space for a free Chunk (excludes Header) */
+#define MIN_CHUNK 32
+
+
+#define ALLOC 0x55555555
+#define FREE  0xAAAAAAAA
+
+/// Types:
+
+typedef unsigned int  uint;
+typedef unsigned char byte;
+
+typedef uintptr_t     addr; // an address as a numeric type
+
+/** The header for a chunk. */
+typedef struct header {
+	uint status;    /**< the chunk's status -- ALLOC or FREE */
+	uint size;      /**< number of bytes, including header */
+	byte data[];    /**< the chunk's data -- not interesting to us */
+} header;
+
+/** The heap's state */
+struct heap {
+	void  *heapMem;     /**< space allocated for Heap */
+	uint   heapSize;    /**< number of bytes in heapMem */
+	void **freeList;    /**< array of pointers to free chunks */
+	uint   freeElems;   /**< number of elements in freeList[] */
+	uint   nFree;       /**< number of free chunks */
+};
+
+void insertFreeList (header *H);
+void removeFromFreeList (int indexNext);
+void argumentCheck (void *obj);
+int findFreeSpace (header *H, int size);
+header *findPrevHeader (header *H);
+
+/// Variables:
+
+/** The heap proper. */
+static struct heap Heap;
+
+
+/// Functions:
+
+static addr heapMaxAddr (void);
+
+	
+/** Initialise the Heap. */
+int initHeap (int size)
+{
+    if (size < MIN_HEAP) {
+            size = MIN_HEAP;
+    }
+    if (size % 4 != 0) {
+            int roundup = 4 - (size % 4);
+            size = size + roundup;
+    }        
+	Heap.nFree = 1;
+	Heap.freeElems = 1;
+	Heap.heapSize = size;
+	/// TODO ///
+
+	Heap.heapMem = calloc(size, sizeof(char)); 
+	if (Heap.heapMem == NULL) {
+	        return -1;
+    }
+    // setting up freelist
+    Heap.freeElems = size/MIN_CHUNK;
+    Heap.freeList = calloc(Heap.freeElems, sizeof(void*)); 
+    //setting single free block to freelist
+    header *H = (header *)(Heap.heapMem); 
+    H->status = FREE;
+    H->size = size;
+    Heap.freeList[0] = H;
+	return 0; // this just keeps the compiler quiet
+}
+
+/** Release resources associated with the heap. */
+void freeHeap (void)
+{
+	free (Heap.heapMem);
+	free (Heap.freeList);
+}
+
+/** Allocate a chunk of memory large enough to store `size' bytes. */
+void *myMalloc (int size)
+{
+	/// TODO ///
+	
+    if (size % 4 != 0) {
+            int roundup = 4 - (size % 4);
+            size = size + roundup;
+    }
+    if (size < 0) {
+    	return NULL;
+	}
+	header *freeChunk = NULL;
+	int index = findFreeSpace (freeChunk, size);
+	/*
+	int smallest = Heap.heapSize;
+    int i = 0;
+    int index = 0;
+    while (i < (Heap.nFree)) {
+
+		if (Heap.freeList[i] != NULL && ((header *)Heap.freeList[i])->size >= (size + sizeof(header)) && ((header *)Heap.freeList[i])->size <= smallest) {
+		        smallest = ((header *)Heap.freeList[i])->size;
+		        freeChunk = ((header *)Heap.freeList[i]); 
+		        index = i;
+		}
+        i++;
+    }
+    */
+    // I have tried making the loop above in a separate function but all attempts have broken the code
+    if (freeChunk == NULL) {
+    	printf("is NULL");
+    	return NULL;
+	}
+	// if chunk is larger and needs partitioning
+    if (freeChunk->size > (size + sizeof(header) + MIN_CHUNK)) {
+        addr freePointer = (addr)freeChunk;						
+	  	freePointer += size + sizeof(header);
+        header *H  = (header *)(freePointer);
+        H->status = FREE;
+        H->size = freeChunk->size - (size + sizeof(header)); 
+
+        Heap.freeList[index] = H;	
+        freeChunk->size = size + sizeof(header) ;
+        freeChunk->status = ALLOC;
+        return (void *)((addr)freeChunk + sizeof(header)); 
+  
+    } 
+    // allocating whole chunk
+    else {	
+        freeChunk->status = ALLOC;
+        removeFromFreeList(index);
+        return (void *)((addr)freeChunk + sizeof(header));     
+    }
+                                                
+                                                               
+	return NULL; // this just keeps the compiler quiet
+}
+
+/** Deallocate a chunk of memory. */
+
+void myFree (void *obj) {   
+
+	/// TODO ///
+	if (obj == NULL) {
+		return;
+	}
+	// check if middle of chunk
+	argumentCheck(obj);
+	header *H  = ((header *)((addr)(obj) - sizeof(header)));
+	if (H->status == FREE) {
+		fprintf(stderr, "Attempt to free unallocated chunk\n");
+		exit(1);
+	}	
+	else {
+		H->status = FREE;
+	}
+	memset(obj, 0, H->size - sizeof(header));
+	addr next = ((addr)H) + H->size;
+	header *nextSpace = (header *)next;
+	header *prevSpace = findPrevHeader(H);
+	
+	int indexNext = 0;
+	if (prevSpace == NULL) {
+		// only next chunk is free
+		if (nextSpace->status == FREE) {
+			int i = 0;
+			while (i < (Heap.nFree)) {
+				if (((header *)Heap.freeList[i]) == (header *)nextSpace) {
+					indexNext = i;
+					break;
+				}
+				i++;
+			}
+			H->size += nextSpace->size;
+			Heap.freeList[indexNext] = H;
+		}
+		// no free chunk adjacent to current chunk
+		else {		
+			//insert in freeList
+			insertFreeList(H);
+		}
+	}	
+	else {
+		// previous and next are free
+		if (nextSpace->status == FREE) {
+			prevSpace->size += H->size + nextSpace->size;
+			//adjust freeList
+			removeFromFreeList (indexNext);
+		}
+		// only previous is free
+		else {
+			prevSpace->size += H->size;
+		}				
+							
+	}
+	
+}
+// finds if previous chunk is free
+header *findPrevHeader (header *H) {
+	header *prevSpace = NULL;
+	int j = 0;
+	while (j < (Heap.nFree)) {
+		addr prev = ((addr)Heap.freeList[j]) + ((header *)Heap.freeList[j])->size;
+		if (prev == (addr)H) {
+			prevSpace = ((header *)Heap.freeList[j]);
+			//indexPrev = j;
+			break;
+		}
+		j++;
+	}
+	return prevSpace;
+}
+
+
+// loop through freeList to find free space that matches criteria 
+int findFreeSpace (header *freeSpace, int size) {
+	header *pointer = NULL;
+	int smallest = Heap.heapSize;
+    int i = 0;
+    int index = 0;
+    while (i < (Heap.nFree)) {
+
+		if (Heap.freeList[i] != NULL && ((header *)Heap.freeList[i])->size >= (size + sizeof(header)) && ((header *)Heap.freeList[i])->size <= smallest) {
+		        smallest = ((header *)Heap.freeList[i])->size;
+		        pointer = ((header *)Heap.freeList[i]); 
+		        index = i;
+		}
+        i++;
+    }
+    freeSpace = pointer;
+	return index;
+}
+
+// check if argument to myFree is in the middle of a chunk
+void argumentCheck (void *obj) {
+	addr curr = (addr) Heap.heapMem;
+	while (curr < heapMaxAddr ()) {
+		header *chunk = (header *) curr;
+		if (((addr)obj - sizeof(header)) ==(addr)chunk) {
+			break;
+		}
+		curr += chunk->size;
+	}
+	
+	if (curr == heapMaxAddr()) {
+		fprintf(stderr, "Attempt to free unallocated chunk\n");
+		printf("error\n");
+		exit(1);
+	}
+}
+
+// removes a free space from myFreeList
+void removeFromFreeList (int indexNext) {
+	if (indexNext == Heap.nFree - 1) {
+		Heap.freeList[indexNext] = NULL;
+	}
+	else {	
+		int j = indexNext;
+		while (j < Heap.nFree) {
+			Heap.freeList[j] = Heap.freeList[j + 1];
+			j++;
+		}
+	}
+	Heap.nFree--;
+	
+}
+
+	
+// inserts a free space in myFreeList
+void insertFreeList (header *H) {
+	// finds where to insert into freeList
+	int i = 0;
+	int index = 0;
+	while (i < Heap.nFree) {
+		if (((addr)Heap.freeList[i]) < (addr)(H)) {
+			index = i;
+		}
+		i++;
+	}
+	Heap.nFree++;
+	int j = Heap.nFree - 1;
+	while (j > index) {
+		Heap.freeList[j] = Heap.freeList[j - 1];	
+		j--;	
+	}
+	Heap.freeList[j] = H;
+	
+
+}	
+
+/** Return the first address beyond the range of the heap. */
+static addr heapMaxAddr (void)
+{
+	return (addr) Heap.heapMem + Heap.heapSize;
+}
+
+/** Convert a pointer to an offset in the heap. */
+int heapOffset (void *obj)
+{
+	addr objAddr = (addr) obj;
+	addr heapMin = (addr) Heap.heapMem;
+	addr heapMax =        heapMaxAddr ();
+	if (obj == NULL || !(heapMin <= objAddr && objAddr < heapMax))
+		return -1;
+	else
+		return (int) (objAddr - heapMin);
+}
+
+/** Dump the contents of the heap (for testing/debugging). */
+void dumpHeap (void)
+{
+	int onRow = 0;
+
+	// We iterate over the heap, chunk by chunk; we assume that the
+	// first chunk is at the first location in the heap, and move along
+	// by the size the chunk claims to be.
+	addr curr = (addr) Heap.heapMem;
+	while (curr < heapMaxAddr ()) {
+		header *chunk = (header *) curr;
+
+		char stat;
+		switch (chunk->status) {
+		case FREE:  stat = 'F'; break;
+		case ALLOC: stat = 'A'; break;
+		default:
+			fprintf (
+				stderr,
+				"myHeap: corrupted heap: chunk status %08x\n",
+				chunk->status
+			);
+			exit (1);
+		}
+
+		printf (
+			"+%05d (%c,%5d)%c",
+			heapOffset ((void *) curr),
+			stat, chunk->size,
+			(++onRow % 5 == 0) ? '\n' : ' '
+		);
+
+		curr += chunk->size;
+	}
+
+	if (onRow % 5 > 0)
+		printf ("\n");
+}

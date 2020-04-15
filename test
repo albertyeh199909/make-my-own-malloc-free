@@ -1,0 +1,17 @@
+x = malloc 500
+y = malloc 200
+z = malloc 100
+free y
+y = malloc 200
+a = malloc 3000
+b = malloc 2500
+c = malloc 1000
+f = malloc 2644
+free f
+free x
+free c
+free z
+free y
+x = malloc 500
+y = malloc 200
+free a
